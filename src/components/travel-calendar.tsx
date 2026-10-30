@@ -7,14 +7,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type CSSProp
 import { DndContext, DragOverlay, PointerSensor, KeyboardSensor, useSensor, useSensors, useDroppable, pointerWithin, closestCenter, type DragStartEvent, type DragEndEvent, type DragOverEvent, type CollisionDetection } from "@dnd-kit/core";
 import { SortableContext, useSortable, rectSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { Plus, ArrowUpRight, ArrowUp, ArrowDown, ArrowRight, Check, Heart, MoreHorizontal, GripVertical, MapPin, Users, X, Share2, ChevronDown, CalendarDays, TrainFront, Utensils, Compass, Coffee, Pencil, MoveRight, Trash2, AlertCircle, LoaderCircle, ArrowLeft, CheckCheck, Clock, Sparkles, CircleHelp } from "lucide-react";
+import { Plus, ArrowUpRight, ArrowUp, ArrowDown, ArrowRight, Check, MoreHorizontal, GripVertical, MapPin, Users, X, Share2, ChevronDown, CalendarDays, TrainFront, Utensils, Compass, Coffee, Pencil, MoveRight, Trash2, AlertCircle, LoaderCircle, ArrowLeft, CheckCheck, Clock, Sparkles, CircleHelp } from "lucide-react";
 import { activitiesOverlap, groupOverlaps, choiceKey, OperationError } from "@/lib/operations";
 import { googleMapsUrl } from "@/lib/maps";
+import { filterActivities, getActivityFilterCounts, type ActivityFilter } from "@/lib/activity-filters";
 import { findPlaceByLocation, type Place } from "@/lib/places";
 import { PlacesStrip } from "./places-strip";
 import { useBoard } from "@/hooks/use-board";
 import { useReducedMotion } from "@/hooks/use-reduced-motion";
 import { ActivityEditor } from "./activity-editor";
+import { ActivityReactions } from "./activity-reactions";
 import { Sheet, SheetClose } from "./sheet";
 import { MembersSheet } from "./members-sheet";
 import { MemberAvatar } from "./member-avatar";
@@ -41,7 +43,6 @@ const INTENTS: { status: Participation; label: string; Icon: typeof Check }[] = 
 const intentLabel = (status?: Participation) => INTENTS.find(i => i.status === status)?.label ?? "未表态";
 // Date and time changes stay available in the editor; direct movement is hidden to avoid accidental changes.
 const ACTIVITY_MOVING_ENABLED = false;
-type ActivityFilter = "all" | "mine" | "interested";
 type DetailPosition = { id: string; top: number };
 function endAfterMove(activity: Activity, time: string) {
   if (!activity.endTime) return "";
@@ -50,16 +51,14 @@ function endAfterMove(activity: Activity, time: string) {
   return end < 1440 ? `${String(Math.floor(end / 60)).padStart(2, "0")}:${String(end % 60).padStart(2, "0")}` : "";
 }
 
-interface CardProps { activity: Activity; state: BoardState; member: MemberId | null; onDetails: (id: string) => void; onRespond: (a: Activity) => void; optionIndex?: number; showTime?: boolean; conflicts?: string[]; onReact: (a: Activity, emoji: Emoji) => void; }
-export function ActivityCard({ activity: a, state, member, onDetails, onRespond, onReact, optionIndex, showTime = true, conflicts = [] }: CardProps) {
+interface CardProps { activity: Activity; state: BoardState; member: MemberId | null; onDetails: (id: string) => void; onRespond: (a: Activity) => void; optionIndex?: number; showTime?: boolean; conflicts?: string[]; onReact: (a: Activity, emoji: Emoji) => void; onAddReaction: (a: Activity) => void; }
+export function ActivityCard({ activity: a, state, member, onDetails, onRespond, onReact, onAddReaction, optionIndex, showTime = true, conflicts = [] }: CardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: a.id, disabled: !ACTIVITY_MOVING_ENABLED, data: { type: "activity", activity: a } });
   const attendees = state.responses.filter(r => r.activityId === a.id && r.status === "going");
   const answered = state.responses.filter(r => r.activityId === a.id).length;
   const interested = state.responses.filter(r => r.activityId === a.id && r.status === "interested").length;
   const maybe = state.responses.filter(r => r.activityId === a.id && r.status === "maybe").length;
   const selected = state.responses.find(r => r.activityId === a.id && r.memberId === member)?.status;
-  const likes = state.reactions.filter(r => r.activityId === a.id && r.emoji === "❤️");
-  const liked = likes.some(r => r.memberId === member);
   const { Icon, label } = CATEGORIES[a.category];
   return <article ref={setNodeRef} data-activity-id={a.id} className={`activity-card ${optionIndex !== undefined ? "choice-card" : ""} ${isDragging ? "is-dragging" : ""}`} style={{ transform: CSS.Transform.toString(transform), transition }}>
     <div className="card-top"><span className="activity-kind">{optionIndex !== undefined ? <b className="option-letter">{optionIndex + 1}</b> : <><Icon size={14} strokeWidth={1.7} />{label}</>}</span><div className="card-tools">
@@ -72,7 +71,7 @@ export function ActivityCard({ activity: a, state, member, onDetails, onRespond,
       {attendees.length > 0 ? <><span className="avatar-stack">{attendees.map(r => <MemberAvatar key={r.memberId} profile={getMemberProfile(state, r.memberId)} small />)}</span><span>{attendees.length} 人参加{answered < 5 && <span className="attendance-pending"> · {5 - answered} 人未表态</span>}</span></> : <><span className="empty-attendance"><Users size={14} /></span><span>{interested ? `${interested} 人感兴趣` : maybe ? `${maybe} 人考虑中` : answered === 5 ? "0 人参加" : "0 人参加"}</span></>}
       <ArrowUpRight size={13} className="summary-arrow" />
     </button>
-    <div className="card-footer"><button className={`intent-button intent-${selected ?? "none"}`} aria-label={`${a.title}：${selected ? intentLabel(selected) : "选择意向"}`} onClick={() => onRespond(a)}>{selected === "going" ? <Check size={14} /> : selected === "interested" ? <Sparkles size={14} /> : selected === "maybe" ? <CircleHelp size={14} /> : selected === "not-going" ? <X size={14} /> : <Plus size={14} />}<span>{selected ? intentLabel(selected) : "选择意向"}</span><ChevronDown size={12} /></button><button className={`like-button ${liked ? "is-liked" : ""}`} aria-label={`${a.title}：${liked ? "取消赞同" : "赞同"}`} aria-pressed={liked} onClick={() => onReact(a, "❤️")}><Heart size={16} fill={liked ? "currentColor" : "none"} /><span>{likes.length || ""}</span></button></div>
+    <div className="card-footer"><button className={`intent-button intent-${selected ?? "none"}`} aria-label={`${a.title}：${selected ? intentLabel(selected) : "选择意向"}`} onClick={() => onRespond(a)}>{selected === "going" ? <Check size={14} /> : selected === "interested" ? <Sparkles size={14} /> : selected === "maybe" ? <CircleHelp size={14} /> : selected === "not-going" ? <X size={14} /> : <Plus size={14} />}<span>{selected ? intentLabel(selected) : "选择意向"}</span><ChevronDown size={12} /></button><ActivityReactions activity={a} reactions={state.reactions} member={member} onReact={onReact} onAdd={onAddReaction} /></div>
   </article>;
 }
 function DayTab({ day, selected, onSelect }: { day: typeof DAYS[number]; selected: boolean; onSelect: () => void }) {
@@ -95,6 +94,7 @@ export function TravelCalendar() {
   const filterRef = useRef(filter); filterRef.current = filter;
   const [showMembers, setShowMembers] = useState(false);
   const [intentTarget, setIntentTarget] = useState<{ activity: Activity; memberId: MemberId; origin?: DetailPosition } | null>(null);
+  const [reactionTarget, setReactionTarget] = useState<{ activityId: string; memberId: MemberId } | null>(null);
   const detailReturn = useRef<DetailPosition | null>(null);
   const [switchChoice, setSwitchChoice] = useState<{ activity: Activity; previous: Activity[]; memberId: MemberId } | null>(null);
   const afterMember = useRef<((id: MemberId) => void) | null>(null);
@@ -277,7 +277,17 @@ export function TravelCalendar() {
     setSwitchChoice(null);
     void dispatch({ id: uid(), type: "participate", activityId: latest.id, memberId, status: "going", choice: { key: choiceKey(latest), previousIds: currentPrevious.map(a => a.id).sort() } }).catch(() => {});
   };
-  const react = (a: Activity, emoji: Emoji) => withMember(id => { const active = !stateRef.current.reactions.some(r => r.activityId === a.id && r.memberId === id && r.emoji === emoji); void dispatch({ id: uid(), type: "react", activityId: a.id, memberId: id, emoji, active }).catch(() => {}); });
+  const submitReaction = (activityId: string, memberId: MemberId, emoji: Emoji, toggle: boolean) => {
+    if (!stateRef.current.activities.some(a => a.id === activityId)) { notify("这个活动已移除"); return; }
+    const selected = stateRef.current.reactions.some(r => r.activityId === activityId && r.memberId === memberId && r.emoji === emoji);
+    if (!toggle && selected) return;
+    void dispatch({ id: uid(), type: "react", activityId, memberId, emoji, active: toggle ? !selected : true }).catch(() => {});
+  };
+  const react = (a: Activity, emoji: Emoji) => withMember(id => submitReaction(a.id, id, emoji, true));
+  const openReactions = (a: Activity) => withMember(id => {
+    if (!stateRef.current.activities.some(item => item.id === a.id)) { notify("这个活动已移除"); return; }
+    setReactionTarget({ activityId: a.id, memberId: id });
+  });
   const openEditor = (day: TripDate, activity?: Activity, time?: string) => { setDetailId(null); setEditor({ key: uid(), activity, date: day, time }); };
   const saveEditor = async (fields: ActivityFields, join: boolean, editorBase: ActivityFields | undefined) => {
     const session = editorRef.current; if (!session) return;
@@ -396,9 +406,9 @@ export function TravelCalendar() {
   const collision: CollisionDetection = args => { const hits = pointerWithin(args); return hits.length ? hits.filter(h => args.droppableContainers.find(c => c.id === h.id)?.data.current?.type === "activity").concat(hits.filter(h => args.droppableContainers.find(c => c.id === h.id)?.data.current?.type !== "activity")) : args.pointerCoordinates ? [] : closestCenter(args); };
   const details = state.activities.find(a => a.id === detailId);
   const detailPlace = details ? findPlaceByLocation(details.location) : undefined;
-  const goingIds = new Set(state.responses.filter(r => r.memberId === member && r.status === "going").map(r => r.activityId));
-  const interestedIds = new Set(state.responses.filter(r => r.memberId === member && r.status === "interested").map(r => r.activityId));
-  const visible = state.activities.filter(a => filter === "all" || (filter === "mine" ? goingIds : interestedIds).has(a.id));
+  const visible = filterActivities(state, member, filter);
+  const dayCounts = getActivityFilterCounts(state, member, date);
+  const tripCounts = getActivityFilterCounts(state, member);
   const totalGoing = state.responses.filter(r => r.status === "going").length;
   const selectedMember = member ? { id: member, ...getMemberProfile(state, member) } : null;
   const syncLabel = board.mode === "cloud" ? (
@@ -421,9 +431,7 @@ export function TravelCalendar() {
         <div className="mobile-date-tabs" style={{ "--selected-day": DATES.indexOf(date) } as CSSProperties}>{DAYS.map(day => <DayTab key={day.date} day={day} selected={day.date === date} onSelect={() => selectDay(day.date)} />)}</div>
         <div className="plan-toolbar">
           <div className="view-switch" role="group" aria-label="筛选安排">
-            <button className={filter === "all" ? "active" : ""} aria-pressed={filter === "all"} onClick={() => selectFilter("all")}>全部安排<span>{state.activities.length}</span></button>
-            <button className={filter === "mine" ? "active" : ""} aria-pressed={filter === "mine"} onClick={() => selectFilter("mine")}>我参加的{member && <span>{goingIds.size}</span>}</button>
-            <button className={filter === "interested" ? "active" : ""} aria-pressed={filter === "interested"} onClick={() => selectFilter("interested")}>感兴趣的{member && <span>{interestedIds.size}</span>}</button>
+            {([['all', '全部安排'], ['mine', '我参加的'], ['interested', '感兴趣的']] as const).map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} aria-pressed={filter === value} onClick={() => selectFilter(value)}>{label}{(value === "all" || member) && <><span className="filter-day-count">{dayCounts[value]}</span><span className="filter-trip-count">{tripCounts[value]}</span></>}</button>)}
           </div>
           <div className="toolbar-right">{syncLabel && <span className={`mobile-sync ${board.connection === "live" ? "live" : ""}`}>{syncLabel}</span>}<button className="primary-button desktop-add" onClick={() => openEditor(date)}><Plus size={16} />添加活动</button></div>
         </div>
@@ -434,8 +442,8 @@ export function TravelCalendar() {
             const groups = groupOverlaps(visible.filter(a => a.date === day.date).sort(sortActivities));
             return <SortableContext items={groups.flat().map(a => a.id)} strategy={rectSortingStrategy}>
               {groups.map(options => options.length === 1
-                ? <ActivityCard key={options[0].id} activity={options[0]} state={state} member={member} onDetails={setDetailId} onRespond={respond} onReact={react} />
-                : <OverlapGroup key={options.map(a => a.id).join(":")} activities={options} state={state} member={member} renderActivity={(a, index, context) => <ActivityCard key={a.id} optionIndex={index} {...context} activity={a} state={state} member={member} onDetails={setDetailId} onRespond={respond} onReact={react} />} />)}
+                ? <ActivityCard key={options[0].id} activity={options[0]} state={state} member={member} onDetails={setDetailId} onRespond={respond} onReact={react} onAddReaction={openReactions} />
+                : <OverlapGroup key={options.map(a => a.id).join(":")} activities={options} state={state} member={member} renderActivity={(a, index, context) => <ActivityCard key={a.id} optionIndex={index} {...context} activity={a} state={state} member={member} onDetails={setDetailId} onRespond={respond} onReact={react} onAddReaction={openReactions} />} />)}
             </SortableContext>;
           })()}
           <button className="day-add" onClick={() => openEditor(day.date)}><Plus size={15} />添加活动</button>
@@ -452,7 +460,15 @@ export function TravelCalendar() {
     }} />}
     {editor && <ActivityEditor key={editor.key} activity={editor.activity} defaultDate={editor.date} defaultTime={editor.time} draftKey={editor.place?.id} initialFields={editor.place ? { title: editor.place.shortName, location: editor.place.locationQuery, category: editor.place.category, time: editor.place.hoursByDate[editor.date].match(/\d{2}:\d{2}/)?.[0] ?? "09:00", endTime: "", note: "" } : undefined} placeInfo={editor.place ? { hours: editor.place.hours, hoursUrl: editor.place.hoursUrl, hoursByDate: editor.place.hoursByDate } : undefined} latestActivity={editor.activity ? board.authoritativeState.activities.find(a => a.id === editor.activity!.id) ?? null : undefined} memberName={selectedMember ? selectedMember.name : undefined} onSave={saveEditor} onClose={() => setEditor(null)} />}
     {detailId && !details && <Sheet title="活动已移除" onClose={() => setDetailId(null)}><SheetClose asChild><button className="primary-button">回到行程</button></SheetClose></Sheet>}
-    {details && <Sheet title={details.title} mobileBodyTitle onClose={() => setDetailId(null)} className="activity-detail-sheet"><ActivityDetailBody activityId={details.id} returnPosition={detailReturn}><div className="detail-meta"><span><CalendarDays size={16} />{details.date.slice(5).replace("-", "月")}日 · {details.time}{details.endTime ? ` — ${details.endTime}` : ""}</span>{details.location && <a className="map-link" href={googleMapsUrl(details.location)} target="_blank" rel="noreferrer"><MapPin size={16} />{details.location}<ArrowUpRight size={14} /></a>}</div>{detailPlace && <div className="place-hours"><Clock size={15} /><span>{detailPlace.hoursByDate[details.date]}</span><a href={detailPlace.hoursUrl} target="_blank" rel="noreferrer">开放时间</a>{detailPlace.hoursNote && <small>{detailPlace.hoursNote}</small>}</div>}{details.note && <p className="detail-note">{details.note}</p>}<h3 className="section-label">参与情况</h3><div className="participant-list">{MEMBERS.map(m => { const status = state.responses.find(r => r.activityId === details.id && r.memberId === m.id)?.status; return <div key={m.id} className="participant-row"><MemberAvatar profile={getMemberProfile(state, m.id)} small /><span>{getMemberProfile(state, m.id).name}{member === m.id && <small>你</small>}</span><span className={`participant-status ${status ?? "unanswered"}`}>{status === "going" ? <><Check size={13} />参加</> : intentLabel(status)}</span></div>; })}</div><div className="detail-responses"><button className="primary-button" onClick={() => respond(details)}><Check size={16} />{member ? `我的意向 · ${intentLabel(state.responses.find(r => r.activityId === details.id && r.memberId === member)?.status)}` : "填写我的意向"}<ChevronDown size={14} /></button></div><div className="detail-reactions"><div>{EMOJIS.map(emoji => { const reactions = state.reactions.filter(r => r.activityId === details.id && r.emoji === emoji); return <button key={emoji} className={reactions.some(r => r.memberId === member) ? "selected" : ""} aria-label={`${details.title} 表情 ${emoji}`} aria-pressed={reactions.some(r => r.memberId === member)} onClick={() => react(details, emoji)}>{emoji}<span>{reactions.length}</span></button>; })}</div></div><div className="detail-actions"><button onClick={() => openEditor(details.date, { ...details })}><Pencil size={16} />编辑活动</button>{ACTIVITY_MOVING_ENABLED && <button onClick={() => { setMoveTarget({ ...details }); setDetailId(null); }}><MoveRight size={16} />移动到</button>}<button className="danger-text" onClick={() => { setDeleteTarget({ ...details }); setDetailId(null); }}><Trash2 size={16} />移除</button></div></ActivityDetailBody></Sheet>}
+    {details && <Sheet title={details.title} mobileBodyTitle onClose={() => setDetailId(null)} className="activity-detail-sheet"><ActivityDetailBody activityId={details.id} returnPosition={detailReturn}><div className="detail-meta"><span><CalendarDays size={16} />{details.date.slice(5).replace("-", "月")}日 · {details.time}{details.endTime ? ` — ${details.endTime}` : ""}</span>{details.location && <a className="map-link" href={googleMapsUrl(details.location)} target="_blank" rel="noreferrer"><MapPin size={16} />{details.location}<ArrowUpRight size={14} /></a>}</div>{detailPlace && <div className="place-hours"><Clock size={15} /><span>{detailPlace.hoursByDate[details.date]}</span><a href={detailPlace.hoursUrl} target="_blank" rel="noreferrer">开放时间</a>{detailPlace.hoursNote && <small>{detailPlace.hoursNote}</small>}</div>}{details.note && <p className="detail-note">{details.note}</p>}<h3 className="section-label">参与情况</h3><div className="participant-list">{MEMBERS.map(m => { const status = state.responses.find(r => r.activityId === details.id && r.memberId === m.id)?.status; return <div key={m.id} className="participant-row"><MemberAvatar profile={getMemberProfile(state, m.id)} small /><span>{getMemberProfile(state, m.id).name}{member === m.id && <small>你</small>}</span><span className={`participant-status ${status ?? "unanswered"}`}>{status === "going" ? <><Check size={13} />参加</> : intentLabel(status)}</span></div>; })}</div><div className="detail-responses"><button className="primary-button" onClick={() => respond(details)}><Check size={16} />{member ? `我的意向 · ${intentLabel(state.responses.find(r => r.activityId === details.id && r.memberId === member)?.status)}` : "填写我的意向"}<ChevronDown size={14} /></button></div><div className="detail-actions"><button onClick={() => openEditor(details.date, { ...details })}><Pencil size={16} />编辑活动</button>{ACTIVITY_MOVING_ENABLED && <button onClick={() => { setMoveTarget({ ...details }); setDetailId(null); }}><MoveRight size={16} />移动到</button>}<button className="danger-text" onClick={() => { setDeleteTarget({ ...details }); setDetailId(null); }}><Trash2 size={16} />移除</button></div></ActivityDetailBody></Sheet>}
+    {reactionTarget && <Sheet title="添加表情" onClose={() => setReactionTarget(null)}><div className="reaction-picker" role="group" aria-label="表情">{EMOJIS.map(emoji => {
+      const selected = state.reactions.some(r => r.activityId === reactionTarget.activityId && r.memberId === reactionTarget.memberId && r.emoji === emoji);
+      return <button key={emoji} type="button" aria-label={`添加 ${emoji}`} aria-pressed={selected} onClick={() => {
+        const target = reactionTarget;
+        setReactionTarget(null);
+        submitReaction(target.activityId, target.memberId, emoji, false);
+      }}><span aria-hidden="true">{emoji}</span>{selected && <Check size={12} aria-hidden="true" />}</button>;
+    })}</div></Sheet>}
     {intentTarget && <Sheet title="参与意向" description={`${getMemberProfile(state, intentTarget.memberId).name} · ${intentTarget.activity.title}`} onClose={() => setIntentTarget(null)} onBack={intentTarget.origin ? returnToDetails : undefined} backLabel="返回活动详情"><div className="intent-options">{INTENTS.map(({status,label,Icon}) => { const selected = state.responses.some(r => r.activityId === intentTarget.activity.id && r.memberId === intentTarget.memberId && r.status === status); return <button key={status} className={`intent-option intent-${status} ${selected ? "selected" : ""}`} onClick={() => { setIntentTarget(null); submitIntent(intentTarget.activity, intentTarget.memberId, status); }}><span><Icon size={19} /></span><strong>{label}</strong>{selected && <Check size={18} />}</button>; })}</div><button className="clear-intent" onClick={() => { setIntentTarget(null); submitIntent(intentTarget.activity, intentTarget.memberId, null); }}>清除选择</button></Sheet>}
     {switchChoice && <Sheet title="更改参加活动" onClose={() => setSwitchChoice(null)}><p className="choice-switch-note">参加「{switchChoice.activity.title}」，「{switchChoice.previous.map(a => a.title).join("、")}」恢复未表态。</p><div className="form-footer"><SheetClose asChild><button className="secondary-button">取消</button></SheetClose><button className="primary-button" onClick={confirmChoice}>改选<ArrowRight size={16} /></button></div></Sheet>}
     {ACTIVITY_MOVING_ENABLED && moveTarget && <MoveSheet activity={moveTarget} onClose={() => setMoveTarget(null)} onMove={async (nextDate, time) => { const target = moveTarget; await move(target, nextDate, time); if (moveRef.current === target) setMoveTarget(null); notify("安排已移动"); }} onReorder={async direction => { const target = moveTarget; await reorder(target, direction); if (moveRef.current === target) setMoveTarget(null); }} state={state} />}

@@ -54,5 +54,10 @@ if ! docker exec -i "$trip_test_container" psql -X -q -v ON_ERROR_STOP=1 -U post
   exit 1
 fi
 rg 'PASS:' "$trip_test_log"
+if ! docker exec -i "$trip_test_container" psql -X -q -v ON_ERROR_STOP=1 -U postgres < tests/sql/activity-reactions.sql >"$trip_test_log" 2>&1; then
+  cat "$trip_test_log"
+  exit 1
+fi
+rg 'PASS:' "$trip_test_log"
 python3 scripts/test-database.py "$trip_test_container"
 npx tsx -e 'import fs from "node:fs"; import {SEED_STATE} from "./src/lib/seed.ts"; const seed=JSON.parse(fs.readFileSync("supabase/seed.json","utf8")); if(JSON.stringify(seed)!==JSON.stringify(SEED_STATE)) throw new Error("SQL and TS seed differ"); console.log("PASS: SQL and TypeScript seed match")'

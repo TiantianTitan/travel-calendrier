@@ -197,6 +197,24 @@ assert op({"id": "profile-after-duplicate", "type": "profile", "memberId": "hoti
 retried_profile = json.loads(op(profile_duplicate).stdout)
 assert_pass(retried_profile["duplicate"] and retried_profile["state"]["profiles"]["hoting"]["name"] == "Hoting new", "old profile retry returns latest nickname without reverting a newer edit")
 
+# Separate member reactions contend on the board row without losing counts.
+reaction_before = state()
+reaction_requests = [
+    {"id": f"concurrent-fire-{member}", "type": "react", "activityId": "concurrent-item", "memberId": member, "emoji": "🔥", "active": True}
+    for member in members
+]
+with ThreadPoolExecutor(max_workers=5) as executor:
+    results = list(executor.map(op, reaction_requests))
+assert_pass(all(r.returncode == 0 for r in results), "five members can concurrently add the same expanded reaction")
+fire_members = [r["memberId"] for r in state()["reactions"] if r["activityId"] == "concurrent-item" and r["emoji"] == "🔥"]
+assert_pass(len(fire_members) == 5 and set(fire_members) == set(members), "concurrent expanded reaction count includes each member exactly once")
+reaction_duplicate = {"id": "concurrent-photo-retry", "type": "react", "activityId": "concurrent-item", "memberId": "mia", "emoji": "📸", "active": True}
+with ThreadPoolExecutor(max_workers=5) as executor:
+    results = list(executor.map(op, [reaction_duplicate] * 5))
+assert_pass(all(r.returncode == 0 for r in results) and sum(json.loads(r.stdout).get("duplicate", False) for r in results) == 4, "five concurrent expanded emoji retries apply exactly once")
+assert_pass(state()["version"] == reaction_before["version"] + 6, "expanded reaction races increment version only for unique successful operations")
+assert_pass(all(state()[field] == reaction_before[field] for field in ("activities", "responses", "profiles")), "expanded reaction races preserve activities, participation and profiles")
+
 # Re-running deployment after actual writes must preserve edits and the dedupe ledger.
 before = state()
 for migration_path in sorted(Path("supabase/migrations").glob("*.sql")):
@@ -267,3 +285,45 @@ assert_pass(copy_after == expected_copy, "copy migration changes only matching d
 assert_pass(sql("select count(*) from travel_private.trip_operations;", database=copy_database).stdout == ledger_before, "copy migration preserves operation history")
 sql(migration_004, database=copy_database)
 assert_pass(copy_state() == copy_after, "copy migration rerun is fully idempotent including all versions")
+
+# Upgrade an actual seven-migration board with existing votes and profiles. This
+# is deliberately a separate disposable DB; no hosted state is used or changed.
+reaction_database = "trip_reactions_migration_test"
+sql("create database " + reaction_database + ";")
+for migration_path in sorted(Path("supabase/migrations").glob("*.sql")):
+    if migration_path.name.startswith("202610300008"):
+        break
+    sql(migration_path.read_text(), database=reaction_database)
+
+def upgrade_state():
+    return json.loads(sql("select state from public.trip_boards where id='toulouse-2026';", database=reaction_database).stdout)
+
+def upgrade_op(operation, ok=True):
+    return sql("set role anon; select public.apply_trip_operation($op$" + json.dumps(operation, ensure_ascii=False) + "$op$::jsonb);", ok=ok, database=reaction_database)
+
+legacy_reactions = [
+    {"id": f"legacy-reaction-{n}", "type": "react", "activityId": "arrival", "memberId": members[n], "emoji": emoji, "active": True}
+    for n, emoji in enumerate(["❤️", "👍", "🎉"])
+]
+for request in legacy_reactions:
+    upgrade_op(request)
+upgrade_op({"id": "legacy-attendance", "type": "participate", "activityId": "arrival", "memberId": "mia", "status": "interested"})
+upgrade_op({"id": "legacy-profile", "type": "profile", "memberId": "mia", "patch": {"name": "米娅", "avatar": "✈️"}, "base": {"name": "Mia", "avatar": ""}})
+new_reaction = {"id": "new-reaction-after-upgrade", "type": "react", "activityId": "arrival", "memberId": "mia", "emoji": "📸", "active": True}
+before_upgrade_error = upgrade_op(new_reaction, ok=False)
+assert_pass(before_upgrade_error.returncode != 0 and "VALIDATION:" in before_upgrade_error.stderr, "seven-migration fixture rejects the new activity emoji before upgrade")
+upgrade_before = upgrade_state()
+ledger_query = "select coalesce(jsonb_agg(to_jsonb(operation) order by id),'[]'::jsonb) from travel_private.trip_operations as operation;"
+upgrade_ledger_before = sql(ledger_query, database=reaction_database).stdout
+migration_008 = Path("supabase/migrations/202610300008_activity_reactions.sql").read_text()
+sql(migration_008, database=reaction_database)
+assert_pass(upgrade_state() == upgrade_before, "008 upgrade preserves complete existing snapshot including old reactions, profile, participation and version")
+assert_pass(sql(ledger_query, database=reaction_database).stdout == upgrade_ledger_before, "008 upgrade preserves every existing operation ledger field")
+sql(migration_008, database=reaction_database)
+assert_pass(upgrade_state() == upgrade_before and sql(ledger_query, database=reaction_database).stdout == upgrade_ledger_before, "008 alone is safely rerunnable without snapshot or ledger writes")
+assert_pass(all(json.loads(upgrade_op(request).stdout).get("duplicate", False) for request in legacy_reactions), "old reaction retries remain idempotent after 008 upgrade")
+upgraded_result = json.loads(upgrade_op(new_reaction).stdout)
+assert_pass(not upgraded_result.get("duplicate", False) and upgraded_result["state"]["version"] == upgrade_before["version"] + 1, "new expanded reaction succeeds once after 008 upgrade")
+assert_pass(upgraded_result["state"]["reactions"][:-1] == upgrade_before["reactions"] and all(upgraded_result["state"][field] == upgrade_before[field] for field in ("activities", "responses", "profiles")), "first expanded reaction keeps all pre-upgrade votes and other domains intact")
+upgrade_op({"id": "avatar-after-008", "type": "profile", "memberId": "hoting", "patch": {"avatar": "🍩"}, "base": {"avatar": ""}})
+assert_pass(upgrade_state()["profiles"]["hoting"]["avatar"] == "🍩", "008 retains expanded avatar whitelist from 007")

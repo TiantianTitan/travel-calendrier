@@ -9,7 +9,11 @@ export const MEMBERS = [
   { id: "kada", name: "Kada", color: "#e6def1" },
 ] as const;
 export type MemberId = (typeof MEMBERS)[number]["id"];
-export const EMOJIS = ["❤️", "👍", "🎉"] as const;
+export const EMOJIS = [
+  "❤️", "👍", "🎉", "😂", "😍", "🥰", "😎", "🤩",
+  "👏", "🙌", "🔥", "✨", "💯", "🤔", "👀", "😋",
+  "🍻", "☕", "🍜", "🥐", "🏃", "🚀", "📸", "🌟",
+] as const;
 export type Emoji = (typeof EMOJIS)[number];
 export type Category = "travel" | "explore" | "food" | "rest";
 export const PARTICIPATION_STATES = ["going", "not-going", "interested", "maybe"] as const;

@@ -4,7 +4,7 @@
 
 ## SQL Editor 部署
 
-目标项目：`ebbjeibnxywgyegcejzh`。在该项目的 SQL Editor 新建查询，全新项目按文件名顺序执行 `supabase/migrations/` 中的全部 SQL。第一份 `202610300001_trip_calendar.sql` 包含事务、表、权限、RPC、Realtime publication 和 15 项初始活动；第二份 `202610300002_participation_choices.sql` 升级四种参与状态、候选确认互斥及移动冲突保护；第三份 `202610300003_choice_confirmation_guard.sql` 增加改选确认的并发保护；第四份 `202610300004_default_activity_copy.sql` 精简初始标题和备注；第五份 `202610300005_overlapping_activity_choices.sql` 将参加互斥改为直接区间重叠；第六份 `202610300006_member_profiles.sql` 增加共享昵称与头像；第七份 `202610300007_emoji_avatars.sql` 将头像表情扩充为 36 个。已经部署前六份的项目只执行第七份。第二、三、五、六、七份只更新函数，不改现有行程；第四份逐字段核对旧默认文案后更新，不覆盖用户编辑，也不改写操作日志。重复部署仍需依次运行全部迁移，避免只重跑旧版而将函数降级。不要将测试 SQL 放到线上执行。
+目标项目：`ebbjeibnxywgyegcejzh`。在该项目的 SQL Editor 新建查询，全新项目按文件名顺序执行 `supabase/migrations/` 中的全部 SQL。第一份 `202610300001_trip_calendar.sql` 包含事务、表、权限、RPC、Realtime publication 和 15 项初始活动；第二份 `202610300002_participation_choices.sql` 升级四种参与状态、候选确认互斥及移动冲突保护；第三份 `202610300003_choice_confirmation_guard.sql` 增加改选确认的并发保护；第四份 `202610300004_default_activity_copy.sql` 精简初始标题和备注；第五份 `202610300005_overlapping_activity_choices.sql` 将参加互斥改为直接区间重叠；第六份 `202610300006_member_profiles.sql` 增加共享昵称与头像；第七份 `202610300007_emoji_avatars.sql` 将头像表情扩充为 36 个；第八份 `202610300008_activity_reactions.sql` 将活动表情扩充为 24 个。已经部署前七份的项目只执行第八份。第二、三、五、六、七、八份只更新函数，不改现有行程；第四份逐字段核对旧默认文案后更新，不覆盖用户编辑，也不改写操作日志。重复部署仍需依次运行全部迁移，避免只重跑旧版而将函数降级。不要将测试 SQL 放到线上执行。
 
 初始活动来源为 `src/lib/seed.ts`，JSON 副本为 `supabase/seed.json`。参与和表情最初全部为空，所有活动都是可编辑的旅行方案，不表示已经预约或确认开放时间。
 
@@ -18,7 +18,7 @@ select id, version,
        jsonb_array_length(state->'responses') as response_count,
        jsonb_array_length(state->'reactions') as reaction_count
 from public.trip_boards where id = 'toulouse-2026';
--- 全部七份迁移完成的全新项目：version=1, activity_count=15, response_count=0, reaction_count=0。
+-- 全部八份迁移完成的全新项目：version=1, activity_count=15, response_count=0, reaction_count=0。
 -- 初始活动 revision=2；线上已有修改时版本可能更高。
 
 select schemaname, tablename
@@ -51,7 +51,7 @@ select has_table_privilege('anon', 'public.trip_boards', 'SELECT') as may_read,
 - 一个活动可以有多位成员，每个成员仅有一个当前参与状态：`going` 参加、`not-going` 不参加、`interested` 感兴趣、`maybe` 考虑考虑；`null` 撤回。活动只有在同一天、两者均有严格正时长（结束晚于开始），且 `a.start < b.end && b.start < a.end` 时才直接冲突。边界相接、跨日、空结束时间、零时长均不推断冲突。确认参加时，同一事务仅将该成员所有直接重叠活动的 `going` 撤回为未表态；其他成员及感兴趣、考虑、不参加均保留。此关系不传递：A 14:00–15:00、B 14:30–16:00、C 15:30–17:00 中可同时参加 A+C，选择 B 时则需确认撤回 A+C。界面连通分组只影响展示，不扩大互斥范围。旧格式无确认基线的两个同时请求依次生效，最终只有一个确认；带确认基线的新请求会检查用户刚查看的候选组与原选择，过期则拒绝，旧请求重试不反转最后结果。
 - 新的确认参加请求带可选 `choice: { key, previousIds }`，`key` 是 `${date}|${time}|${endTime}`，`previousIds` 为本人其他直接重叠 `going` 活动 ID 的集合，顺序无关、不能重复。RPC 获取行锁后比较当前时段和当前旧选择集合；若目标时段或直接冲突集合在确认面板打开期间改变，返回 `CONFLICT: 候选安排刚有变化，请查看后重新确认。`，不撤回任何未被用户审阅的新选择。此字段只允许用于 `going`，省略时兼容旧队列；已生效请求的幂等重试直接返回当前快照，不重新触发确认检查。
 - 修改日期或时间如果使活动与同一成员已确认的其他活动直接重叠，返回 `CONFLICT: 这次移动会让已参加的安排重合，请先调整接龙。`，整笔活动与参与状态均不变。只改标题等不变更时段的修改仍可进行。为原本空结束时间的活动补充时长，也按更新后的实际区间检查。
-- 表情按活动、成员、表情唯一，提交 `active: true/false`，不改变参与状态。
+- 活动表情支持 `src/lib/types.ts` 的 24 项：❤️ 👍 🎉 😂 😍 🥰 😎 🤩 👏 🙌 🔥 ✨ 💯 🤔 👀 😋 🍻 ☕ 🍜 🥐 🏃 🚀 📸 🌟。每条记录按活动、成员、表情唯一，提交 `active: true/false`；每个表情的计数是选中它的成员数，最多五人，同一成员可选多个不同表情。取消仅移除自己的对应表情，不改变参与、成员资料或活动 revision；旧请求重试不会复活已取消的表情。第八份迁移不改任何既有表情、快照版本或操作日志，头像表情白名单仍独立保留。
 - `state.profiles` 是可选的成员资料对象，键仍为固定的 `hoting`、`mia`、`james`、`ganggang`、`kada`。缺省时显示原来的名字和首字母头像。`profile` 操作提交 `{id,type:"profile",memberId,patch,base}`，字段只允许 `name` / `avatar`；与活动相同，两个字段可独立合并，同字段过期时整笔冲突。修改昵称不迁移或更改接龙、表情中的成员 ID。资料也公开共享，不是认证身份。
 - 昵称必须已经去除首尾空白，长度 1–24 个 Unicode 码点，不能含 ASCII / C1 控制字符。当前界面只提供首字母头像与 `src/lib/member-profiles.ts` 的 36 个表情，不再提供照片上传。数据库与读取校验继续兼容旧照片和既有重试请求：允许空字符串、上述表情，或规范 Base64 编码的 `data:image/jpeg;base64,...` / PNG / WebP；检查对应栅格格式签名、拒绝外部 URL 与 SVG，解码后最多 24 KiB。旧版客户端照片会保留，数据库不承担图片解码或裁剪。五个成员头像总量最多约 160 KiB 编码文本，旧快照不需回填。
 - 删除必须提供最新活动 revision，并同时移除对应参与和表情。远端删除后修改返回 `NOT_FOUND`，不会复活活动。
@@ -64,7 +64,7 @@ select has_table_privilege('anon', 'public.trip_boards', 'SELECT') as may_read,
 
 第四份迁移的数据来源为 `docs/seed-copy-updates.json`。它在同一行锁事务中逐活动、逐字段比较当前 `title` / `note` 与旧默认值，只对完全相同的字段替换新文案。自定义标题不妨碍未改备注更新，自定义备注也不妨碍未改标题更新；日期、时间、地点、顺序、分类、成员状态、表情与活动 ID 均不变。已删除活动不恢复，用户新建活动不受影响。
 
-每个实际发生内容变化的活动 revision 加 1，整板有任意变化时 version 只加 1。没有匹配旧字段时不写数据库、不增加版本，因此重复运行幂等。新项目完整运行七份迁移后，最终状态与新版 `SEED_STATE` / `supabase/seed.json` 逐值一致。
+每个实际发生内容变化的活动 revision 加 1，整板有任意变化时 version 只加 1。没有匹配旧字段时不写数据库、不增加版本，因此重复运行幂等。新项目完整运行八份迁移后，最终状态与新版 `SEED_STATE` / `supabase/seed.json` 逐值一致。
 
 ## 可重复的真实数据库验证
 
@@ -76,7 +76,7 @@ select has_table_privilege('anon', 'public.trip_boards', 'SELECT') as may_read,
 
 脚本启动专用 `postgres:17-alpine` 临时 Docker 容器，名称前缀为 `travel-calendrier-pg-test-`，不开放端口，不连接现有数据库，不使用任何生产凭据，退出时删除自己创建的容器。需要本机 Docker、Python 3、项目已安装的 `tsx` 和 `rg`。
 
-2026-10-30 实际验证通过：258 条断言，覆盖 36 个头像表情逐个经 RPC 写入、共享昵称与头像的默认值兼容、Unicode 码点边界、图片签名与大小上限、最大新旧图片替换、资料字段合并/并发冲突/重复重试、保留既有成员接龙和活动 revision、迁移/种子一致性、重复部署保护、RLS 和真实权限拒绝、未知/无效输入、文本 Unicode 边界、可选结束时间的新增／清空／移动、四态参与、任意重叠区间确认互斥、非传递链的两端可共存、相接边界/跨日/空结束/零时长独立、不同区间并发确认与桥接选择原子替换、并发候选确认和旧请求重试、确认基线过期拒绝、等待远端移动行锁后重新校验、移动冲突保护、参与撤回/去重、表情独立性、删除清理、字段基线冲突、原子版本、8 个同时重复请求仅生效一次、同字段并发一个成功一个冲突、不同字段同时合并、五人同时接龙、日志隐私以及默认文案更新的逐字段保护、版本递增与重复执行幂等。
+2026-10-30 实际验证通过：318 条断言，覆盖 24 个活动表情逐个经 RPC 写入和取消、按成员计数及多表情并存、目标取消/旧请求重试不复活、五成员并发表情和重复请求、007→008 升级及重跑完整保留既有快照/版本/幂等日志、36 个头像表情逐个经 RPC 写入、共享昵称与头像的默认值兼容、Unicode 码点边界、图片签名与大小上限、最大新旧图片替换、资料字段合并/并发冲突/重复重试、保留既有成员接龙和活动 revision、迁移/种子一致性、重复部署保护、RLS 和真实权限拒绝、未知/无效输入、文本 Unicode 边界、可选结束时间的新增／清空／移动、四态参与、任意重叠区间确认互斥、非传递链的两端可共存、相接边界/跨日/空结束/零时长独立、不同区间并发确认与桥接选择原子替换、并发候选确认和旧请求重试、确认基线过期拒绝、等待远端移动行锁后重新校验、移动冲突保护、参与撤回/去重、表情独立性、删除清理、字段基线冲突、原子版本、8 个同时重复请求仅生效一次、同字段并发一个成功一个冲突、不同字段同时合并、五人同时接龙、日志隐私以及默认文案更新的逐字段保护、版本递增与重复执行幂等。
 
 本测试证明 PostgreSQL 逻辑和 publication 配置。Supabase 托管服务的 WebSocket 传输、真实移动设备触控及线上双客户端同步仍需应用端分别验收；本地 PostgreSQL 测试不能替代这些证据。
 

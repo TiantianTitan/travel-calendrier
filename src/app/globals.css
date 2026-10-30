@@ -91,7 +91,7 @@ h1{font-size:35px;font-weight:600;letter-spacing:-1.5px;line-height:1.35}
 .avatar-stack{display:flex;padding-left:0}
 .avatar-stack .avatar+.avatar{margin-left:-8px}
 .attendance-pending{color:#69716b}
-.card-footer{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #f3f5f3;min-height:48px;margin-top:2px}
+.card-footer{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:6px 10px;border-top:1px solid #f3f5f3;min-height:48px;margin-top:2px;padding:7px 0}
 .response-buttons{display:flex;gap:3px}
 .response-button{min-height:38px;padding:4px 8px;display:flex;align-items:center;justify-content:center;gap:4px;border-radius:7px;font-size:10px;font-weight:550;color:#566159}
 .skip-button{color:#69716b;font-weight:400;font-size:10px}
@@ -168,7 +168,7 @@ to{opacity:1;transform:translate(-50%,0)}
 .participant-status.going{color:#566159}
 .participant-status.not-going{color:#69716b}
 .participant-status.unanswered{color:#69716b}
-.detail-responses{display:flex;gap:10px}
+.detail-responses{display:flex;gap:10px;margin-bottom:24px}
 .detail-responses>button{flex:1}
 .detail-reactions{margin:24px 0;display:flex;align-items:center;justify-content:space-between;font-size:11px;color:#69716b;gap:10px}
 .detail-reactions>div{display:flex;gap:6px}
@@ -787,3 +787,16 @@ button{transition:transform var(--motion-press) ease-out,opacity var(--motion-pr
   }
 }
 @media(max-width:359px){.sheet-content{--sheet-side-padding:18px}}
+
+/* Reactions stay on the card; narrow alternatives keep the two controls on separate lines. */
+.view-switch .filter-day-count{display:none}
+@media(max-width:799px){.view-switch .filter-day-count{display:inline-flex}.view-switch .filter-trip-count{display:none}}
+.card-footer>.intent-button{flex-shrink:0}
+.choice-card .card-footer>.intent-button{flex:1 0 100%}
+.reaction-picker{display:grid;grid-template-columns:repeat(auto-fit,minmax(44px,1fr));gap:8px;width:100%;max-width:360px;margin:0 auto}
+.reaction-picker button{position:relative;display:grid;place-items:center;min-width:44px;min-height:48px;border:1px solid var(--line);border-radius:10px;background:var(--surface);font-size:26px;line-height:1;touch-action:manipulation;transition:background-color 100ms ease-out,transform 100ms ease-out}
+.reaction-picker button[aria-pressed=true]{background:var(--soft);border-color:#9aa49f}
+.reaction-picker button>svg{position:absolute;right:3px;bottom:3px;color:var(--brand)}
+.reaction-picker button:active{transform:scale(.96);background:var(--soft)}
+@media(hover:hover) and (pointer:fine){.reaction-picker button:hover{background:var(--soft)}}
+@media(prefers-reduced-motion:reduce){.reaction-picker button{transition:none}.reaction-picker button:active{transform:none}}

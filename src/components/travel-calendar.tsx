@@ -397,7 +397,14 @@ export function TravelCalendar() {
   const visible = state.activities.filter(a => filter === "all" || (filter === "mine" ? goingIds : interestedIds).has(a.id));
   const totalGoing = state.responses.filter(r => r.status === "going").length;
   const selectedMember = member ? { id: member, ...getMemberProfile(state, member) } : null;
-  const syncLabel = board.mode === "cloud" ? (board.pendingCount ? `${board.pendingCount} 项待同步` : board.connection === "live" ? "已同步" : board.connection === "connecting" ? "连接中" : board.connection === "offline" ? "离线" : "连接中断") : null;
+  const syncLabel = board.mode === "cloud" ? (
+    board.pendingCount ? `${board.pendingCount} 项待同步`
+      : board.error ? "未同步"
+      : board.migration?.remaining ? "旧安排同步中"
+      : board.connection === "live" ? "已同步"
+      : board.connection === "connecting" ? "连接中"
+      : board.connection === "offline" ? "离线" : "连接中断"
+  ) : null;
   const share = async () => {
     try { if (navigator.share) await navigator.share({ title: "图图小分队三日游", text: "图卢兹行程", url: location.href }); else { await navigator.clipboard.writeText(location.href); notify("链接已复制"); } } catch (e) { if ((e as Error).name !== "AbortError") notify("请复制浏览器地址分享"); }
   };

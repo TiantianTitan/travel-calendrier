@@ -2,7 +2,8 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { applyOperation, hasOperationEffect, mergeSnapshot, operationFingerprint, OperationError, parseBoardState, validateOperation } from "../lib/operations";
-import { getSupabase, isCloudConfigured } from "../lib/supabase";
+import { getSupabase } from "../lib/supabase";
+import { isMigrationOperationId, planLegacyMigration, readMigrationJournal, saveMigrationJournal, skipMigrationFollowup, type MigrationJournal } from "../lib/legacy-migration";
 import { TRIP_ID, type BoardState, type Operation, type OperationResult } from "../lib/types";
 
 type Connection = "connecting" | "live" | "offline" | "error";
@@ -19,6 +20,7 @@ interface StoreSnapshot {
   pendingCount: number;
   failedCount: number;
   error: string | null;
+  migration: { total: number; completed: number; remaining: number } | null;
 }
 
 /** Injectable transport keeps queue ordering and failure semantics independently testable. */
@@ -52,9 +54,8 @@ async function withTimeout<T>(run: (signal: AbortSignal) => PromiseLike<T>): Pro
   try { return await run(controller.signal); } finally { clearTimeout(timer); }
 }
 
-function createTransport(): BoardTransport | null {
+function createTransport(): BoardTransport {
   const client = getSupabase();
-  if (!client) return null;
   return {
     async read() {
       const { data, error } = await withTimeout((signal) => client.from("trip_boards").select("state").eq("id", TRIP_ID).abortSignal(signal).single());
@@ -99,13 +100,18 @@ export class BoardStore {
   private generation = 0;
   private storage?: StorageLike;
   private pendingStorage?: StorageLike;
+  private migrationJournal: MigrationJournal | null = null;
+  private migrationPrepared = false;
+  private preparingMigration: Promise<void> | null = null;
+  private advancingMigration = false;
+  private migrationError: string | null = null;
 
   constructor(private transport: BoardTransport | null, storage?: StorageLike, pendingStorage?: StorageLike) {
     this.storage = storage;
     this.pendingStorage = pendingStorage;
     this.snapshot = {
       state: this.authority, authoritativeState: this.authority, ready: false, mode: transport ? "cloud" : "local",
-      connection: transport ? "connecting" : "live", pendingCount: 0, failedCount: 0, error: null,
+      connection: transport ? "connecting" : "live", pendingCount: 0, failedCount: 0, error: null, migration: null,
     };
     this.initialSnapshot = this.snapshot;
   }
@@ -125,7 +131,12 @@ export class BoardStore {
       ...this.snapshot, ...patch, state: projected, authoritativeState: this.authority,
       pendingCount: this.pending.length,
       failedCount: this.pending.filter((entry) => entry.status === "failed" || entry.status === "uncertain").length,
-      error: pendingError || this.storageError || this.readError || null,
+      error: pendingError || this.storageError || this.migrationError || this.readError || null,
+      migration: this.migrationJournal?.items.length ? {
+        total: this.migrationJournal.items.filter((item) => item.operation.type === "create").length,
+        completed: this.migrationJournal.items.filter((item) => item.operation.type === "create" && item.outcome !== "pending").length,
+        remaining: this.migrationJournal.items.filter((item) => item.outcome === "pending").length,
+      } : null,
     };
     this.listeners.forEach((listener) => listener());
   }
@@ -158,6 +169,78 @@ export class BoardStore {
     return { state, applied };
   }
 
+  private prepareMigration(): Promise<void> {
+    if (this.migrationPrepared || !this.storage) return Promise.resolve();
+    if (this.preparingMigration) return this.preparingMigration;
+    const storage = this.storage;
+    this.preparingMigration = (async () => {
+      try {
+        let journal = readMigrationJournal(storage);
+        if (!journal) {
+          const raw = storage.getItem(LOCAL_BOARD_KEY);
+          const planned = raw ? await planLegacyMigration(raw) : null;
+          // Another tab may have written the durable plan while IDs were calculated.
+          journal = readMigrationJournal(storage) ?? (planned?.items.length ? saveMigrationJournal(storage, planned) : null);
+        }
+        this.migrationJournal = journal;
+        this.migrationPrepared = true;
+        this.migrationError = null;
+        if (journal) {
+          const finished = new Set(journal.items.filter((item) => item.outcome !== "pending").map((item) => item.operation.id));
+          this.pending = this.pending.filter((entry) => !finished.has(entry.operation.id));
+          this.persistQueue();
+        }
+      } catch {
+        this.migrationError = "这台设备的旧安排暂未共享，原记录已保留。请重试。";
+      } finally { this.publish(); }
+    })().finally(() => { this.preparingMigration = null; });
+    return this.preparingMigration;
+  }
+
+  private finishMigrationOperation(id: string, outcome: "done" | "skipped") {
+    if (!this.storage || !this.migrationJournal?.items.some((item) => item.operation.id === id)) return;
+    this.migrationJournal = saveMigrationJournal(this.storage, {
+      ...this.migrationJournal,
+      items: this.migrationJournal.items.map((item) => item.operation.id === id ? { ...item, outcome } : item),
+    });
+  }
+
+  private skipMigrationActivity(activityId: string) {
+    if (!this.storage || !this.migrationJournal) return;
+    this.migrationJournal = saveMigrationJournal(this.storage, {
+      ...this.migrationJournal,
+      items: this.migrationJournal.items.map((item) => item.activityId === activityId && item.outcome === "pending" ? { ...item, outcome: "skipped" } : item),
+    });
+  }
+
+  private async advanceMigration() {
+    if (!this.started || !this.transport || !this.storage || !this.migrationPrepared || this.advancingMigration || this.migrationError || !this.online()) return;
+    this.advancingMigration = true;
+    const generation = this.generation;
+    try {
+      while (this.started && generation === this.generation) {
+        this.migrationJournal = readMigrationJournal(this.storage);
+        const item = this.migrationJournal?.items.find((candidate) => candidate.outcome === "pending");
+        if (!item || this.pending.some((entry) => entry.operation.id === item.operation.id)) break;
+        if (item.operation.type === "create" && !item.attempted && this.authority.activities.some((activity) => activity.id === item.activityId)) {
+          this.skipMigrationActivity(item.activityId);
+          continue;
+        }
+        // Persist the exact ID and payload BEFORE any network write. A replay
+        // after a lost response must reach the server ledger, not re-plan intent.
+        this.migrationJournal = saveMigrationJournal(this.storage, {
+          ...this.migrationJournal!, items: this.migrationJournal!.items.map((candidate) => candidate.operation.id === item.operation.id ? { ...candidate, attempted: true } : candidate),
+        });
+        const durable = this.migrationJournal.items.find((candidate) => candidate.operation.id === item.operation.id)!;
+        if (durable.outcome !== "pending") continue;
+        void this.dispatch(durable.operation).catch(() => { /* The ordinary queue exposes errors and retains the stable operation. */ });
+        break;
+      }
+    } catch {
+      this.migrationError = "旧安排尚未全部共享，原记录已保留。请重试。";
+    } finally { this.advancingMigration = false; this.publish(); }
+  }
+
   start = () => {
     if (this.started) return;
     this.started = true;
@@ -173,7 +256,7 @@ export class BoardStore {
           if (cache) { this.authority = parseBoardState(JSON.parse(cache)); this.hasAuthority = true; }
           const queue = JSON.parse(this.pendingStorage?.getItem(CLOUD_PENDING_KEY) || "[]") as PendingEntry[];
           if (!Array.isArray(queue)) throw new Error("Invalid queue");
-          this.pending = queue.map((entry) => {
+          this.pending = queue.filter((entry) => !isMigrationOperationId(entry.operation?.id)).map((entry) => {
             validateOperation(entry.operation);
             // An interrupted request may have committed: keep its original ID for the RPC ledger.
             return { ...entry, status: entry.status === "failed" ? "failed" : "queued" };
@@ -270,6 +353,8 @@ export class BoardStore {
       const state = await this.transport.read();
       if (!this.started || generation !== this.generation) return;
       this.accept(state);
+      await this.prepareMigration();
+      if (!this.started || generation !== this.generation) return;
       this.readError = null;
       this.resumeUncertain();
       this.publish({ ready: true, connection: this.subscribed ? "live" : "error" });
@@ -330,7 +415,7 @@ export class BoardStore {
     if (!this.started || this.sending || (this.transport && !this.hasAuthority)) return;
     if (this.pending.some((entry) => entry.status === "uncertain")) return;
     const entry = this.pending.find((item) => item.status === "queued");
-    if (!entry) return;
+    if (!entry) { void this.advanceMigration(); return; }
     if (this.transport && !this.online()) {
       entry.status = "uncertain";
       entry.error = "目前离线，修改尚未同步。联网后会使用原操作重试。";
@@ -344,8 +429,25 @@ export class BoardStore {
     this.persistQueue();
     this.publish();
     try {
+      const migrationItem = this.migrationJournal?.items.find((item) => item.operation.id === entry.operation.id);
+      if (this.transport && migrationItem && entry.operation.type !== "create") {
+        // Journal-owned operations are restored only after the initial cloud read.
+        // Re-check every attempt, including a request interrupted before reaching
+        // the server; "attempted" alone does not prove a ledger acknowledgement.
+        const generation = this.generation;
+        const state = await this.transport.read();
+        if (!this.started || generation !== this.generation) { entry.status = "queued"; return; }
+        this.accept(state);
+        if (skipMigrationFollowup(this.authority, migrationItem)) {
+          this.finishMigrationOperation(entry.operation.id, "skipped");
+          this.pending = this.pending.filter((item) => item !== entry);
+          this.settle(entry.operation.id);
+          return;
+        }
+      }
       const result = this.transport ? await this.transport.apply(entry.operation) : await this.commitLocal(entry.operation);
       this.accept(result.state);
+      this.finishMigrationOperation(entry.operation.id, "done");
       this.pending = this.pending.filter((item) => item !== entry);
       // An idempotent acknowledgement can describe a create that somebody has
       // since deleted. It is confirmed, but must not be reported as a new card.
@@ -400,6 +502,7 @@ export class BoardStore {
   retry = () => {
     this.readError = null;
     this.storageError = null;
+    this.migrationError = null;
     this.pending.forEach((entry) => {
       if (entry.status === "failed" || entry.status === "uncertain") { entry.status = "queued"; delete entry.error; }
     });
@@ -413,6 +516,13 @@ export class BoardStore {
   };
 
   dropFailed = () => {
+    try {
+      for (const entry of this.pending.filter((item) => item.status === "failed" || item.status === "uncertain")) {
+        const migrationItem = this.migrationJournal?.items.find((item) => item.operation.id === entry.operation.id);
+        if (migrationItem?.operation.type === "create") this.skipMigrationActivity(migrationItem.activityId);
+        else if (migrationItem) this.finishMigrationOperation(entry.operation.id, "skipped");
+      }
+    } catch { this.migrationError = "无法停止旧安排的同步，原记录已保留。请重试。"; this.publish(); return; }
     this.pending = this.pending.filter((entry) => entry.status !== "failed" && entry.status !== "uncertain");
     this.persistQueue();
     this.publish();
@@ -440,7 +550,7 @@ export class BoardStore {
 }
 
 export function useBoard() {
-  const [store] = useState(() => new BoardStore(isCloudConfigured ? createTransport() : null));
+  const [store] = useState(() => new BoardStore(createTransport()));
   const snapshot = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getServerSnapshot);
   useEffect(() => { store.start(); return store.stop; }, [store]);
   return { ...snapshot, dispatch: store.dispatch, retry: store.retry, clearError: store.clearError, dropFailed: store.dropFailed, dropOperation: store.dropOperation };

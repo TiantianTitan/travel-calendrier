@@ -39,6 +39,7 @@ const INTENTS: { status: Participation; label: string; Icon: typeof Check }[] = 
   { status: "not-going", label: "不参加", Icon: X },
 ];
 const intentLabel = (status?: Participation) => INTENTS.find(i => i.status === status)?.label ?? "未表态";
+type ActivityFilter = "all" | "mine" | "interested";
 type DetailPosition = { id: string; top: number };
 function endAfterMove(activity: Activity, time: string) {
   if (!activity.endTime) return "";
@@ -87,7 +88,7 @@ export function TravelCalendar() {
   const { state, dispatch } = board;
   const [member, setMember] = useState<MemberId | null>(null);
   const [date, setDate] = useState<TripDate>(DATES[0]);
-  const [filter, setFilter] = useState<"all" | "mine">("all");
+  const [filter, setFilter] = useState<ActivityFilter>("all");
   const memberRef = useRef(member); memberRef.current = member;
   const filterRef = useRef(filter); filterRef.current = filter;
   const [showMembers, setShowMembers] = useState(false);
@@ -193,8 +194,8 @@ export function TravelCalendar() {
     const active = dragRef.current;
     if (active && state.activities.find(a => a.id === active.activity.id)?.revision !== active.activity.revision) { cancelDrag(); setDndKey(k => k + 1); notify("这个活动有更新，已取消移动"); }
   }, [state.activities, cancelDrag, notify]);
-  const viewKey = (day: TripDate, view: "all" | "mine", id: MemberId | null) => `${day}:${view === "all" ? "all" : `mine:${id ?? "none"}`}`;
-  const selectView = (nextDate: TripDate, nextFilter: "all" | "mine", nextMember: MemberId | null) => {
+  const viewKey = (day: TripDate, view: ActivityFilter, id: MemberId | null) => `${day}:${view === "all" ? "all" : `${view}:${id ?? "none"}`}`;
+  const selectView = (nextDate: TripDate, nextFilter: ActivityFilter, nextMember: MemberId | null) => {
     clearDragRestore();
     const previousKey = viewKey(dateRef.current, filterRef.current, memberRef.current);
     const nextKey = viewKey(nextDate, nextFilter, nextMember);
@@ -227,8 +228,8 @@ export function TravelCalendar() {
   };
   const selectDay = (next: TripDate) => selectView(next, filterRef.current, memberRef.current);
   const withMember = (action: (id: MemberId) => void) => { if (memberRef.current) action(memberRef.current); else { afterMember.current = action; setShowMembers(true); } };
-  const selectFilter = (next: "all" | "mine") => {
-    if (next === "mine") withMember(id => selectView(dateRef.current, next, id));
+  const selectFilter = (next: ActivityFilter) => {
+    if (next !== "all") withMember(id => selectView(dateRef.current, next, id));
     else selectView(dateRef.current, next, memberRef.current);
   };
   const chooseMember = (id: MemberId) => { selectView(dateRef.current, filterRef.current, id); writeLocal("toulouse-member", id); setShowMembers(false); const action = afterMember.current; afterMember.current = null; action?.(id); };
@@ -392,7 +393,8 @@ export function TravelCalendar() {
   const details = state.activities.find(a => a.id === detailId);
   const detailPlace = details ? findPlaceByLocation(details.location) : undefined;
   const goingIds = new Set(state.responses.filter(r => r.memberId === member && r.status === "going").map(r => r.activityId));
-  const visible = state.activities.filter(a => filter === "all" || goingIds.has(a.id));
+  const interestedIds = new Set(state.responses.filter(r => r.memberId === member && r.status === "interested").map(r => r.activityId));
+  const visible = state.activities.filter(a => filter === "all" || (filter === "mine" ? goingIds : interestedIds).has(a.id));
   const totalGoing = state.responses.filter(r => r.status === "going").length;
   const selectedMember = member ? { id: member, ...getMemberProfile(state, member) } : null;
   const syncLabel = board.mode === "cloud" ? (board.pendingCount ? `${board.pendingCount} 项待同步` : board.connection === "live" ? "已同步" : board.connection === "connecting" ? "连接中" : board.connection === "offline" ? "离线" : "连接中断") : null;
@@ -406,11 +408,18 @@ export function TravelCalendar() {
       <DndContext id="trip-calendar" key={dndKey} sensors={sensors} collisionDetection={collision} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd} onDragCancel={cancelDrag} accessibility={{ screenReaderInstructions: { draggable: "按空格开始移动，使用方向键调整位置，空格放下，Escape取消。也可以使用活动详情中的移动到按钮。" } }}>
         <div ref={dateAnchor} aria-hidden="true" />
         <div className="mobile-date-tabs" style={{ "--selected-day": DATES.indexOf(date) } as CSSProperties}>{DAYS.map(day => <DayTab key={day.date} day={day} selected={day.date === date} onSelect={() => selectDay(day.date)} />)}</div>
-        <div className="plan-toolbar"><div className="view-switch" role="group" aria-label="筛选安排"><button className={filter === "all" ? "active" : ""} aria-pressed={filter === "all"} onClick={() => selectFilter("all")}>全部安排<span>{state.activities.length}</span></button><button className={filter === "mine" ? "active" : ""} aria-pressed={filter === "mine"} onClick={() => selectFilter("mine")}>我参加的{member && <span>{goingIds.size}</span>}</button></div><div className="toolbar-right">{syncLabel && <span className={`mobile-sync ${board.connection === "live" ? "live" : ""}`}>{syncLabel}</span>}<button className="primary-button desktop-add" onClick={() => openEditor(date)}><Plus size={16} />添加活动</button></div></div>
+        <div className="plan-toolbar">
+          <div className="view-switch" role="group" aria-label="筛选安排">
+            <button className={filter === "all" ? "active" : ""} aria-pressed={filter === "all"} onClick={() => selectFilter("all")}>全部安排<span>{state.activities.length}</span></button>
+            <button className={filter === "mine" ? "active" : ""} aria-pressed={filter === "mine"} onClick={() => selectFilter("mine")}>我参加的{member && <span>{goingIds.size}</span>}</button>
+            <button className={filter === "interested" ? "active" : ""} aria-pressed={filter === "interested"} onClick={() => selectFilter("interested")}>感兴趣的{member && <span>{interestedIds.size}</span>}</button>
+          </div>
+          <div className="toolbar-right">{syncLabel && <span className={`mobile-sync ${board.connection === "live" ? "live" : ""}`}>{syncLabel}</span>}<button className="primary-button desktop-add" onClick={() => openEditor(date)}><Plus size={16} />添加活动</button></div>
+        </div>
         {board.error && <div className="error-banner" role="alert"><AlertCircle size={17} /><span>{board.error}</span><button onClick={board.retry}>重试</button>{board.failedCount > 0 && <button onClick={board.dropFailed}>停止重试</button>}</div>}
         {!board.ready ? <div className="loading-state"><LoaderCircle className="spinning" size={22} /><span>加载中…</span></div> : <div className="calendar-board">{DAYS.map(day => <DayColumn key={day.date} day={day} selected={day.date === date}>
           <div className="day-heading"><div className="day-date"><span>{day.day}</span><div><b>{day.weekday}</b><small>{day.month}</small></div></div></div>
-          {filter === "mine" && visible.filter(a => a.date === day.date).length === 0 ? <div className="mine-empty"><CalendarDays size={25} strokeWidth={1.5} /><p>暂无参加的活动</p><button className="text-button" onClick={() => selectFilter("all")}>全部安排 <ArrowRight size={14} /></button></div> : (() => {
+          {filter !== "all" && visible.filter(a => a.date === day.date).length === 0 ? <div className="mine-empty"><CalendarDays size={25} strokeWidth={1.5} /><p>{filter === "interested" ? "暂无感兴趣的活动" : "暂无参加的活动"}</p><button className="text-button" onClick={() => selectFilter("all")}>全部安排 <ArrowRight size={14} /></button></div> : (() => {
             const groups = groupOverlaps(visible.filter(a => a.date === day.date).sort(sortActivities));
             return <SortableContext items={groups.flat().map(a => a.id)} strategy={rectSortingStrategy}>
               {groups.map(options => options.length === 1

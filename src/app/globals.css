@@ -249,9 +249,9 @@ h1{font-size:28px;letter-spacing:-1px;line-height:1.45}
 .tab-weekday{display:flex;align-items:center;gap:6px;font-size:10px}
 .tab-dot{width:4px;height:4px;border-radius:50%;background:currentColor;opacity:0}
 .selected .tab-dot{opacity:1}
-.plan-toolbar{margin:4px 0 14px;min-height:44px}
-.view-switch{gap:23px}
-.view-switch button{font-size:12px;min-height:40px}
+.plan-toolbar{margin:4px 0 14px;min-height:44px;flex-wrap:wrap;row-gap:4px}
+.view-switch{gap:4px 16px;flex-wrap:wrap;max-width:100%}
+.view-switch button{font-size:12px;min-height:40px;white-space:nowrap}
 .view-switch button span{font-size:9px}
 .toolbar-right{display:none}
 .calendar-board{display:block}
@@ -397,9 +397,9 @@ button:active:not(:disabled){transform:none}
 .choice-note{font-size:8px}
 }
 
-@media(max-width:799px){.plan-toolbar .toolbar-right{display:flex}
+@media(max-width:799px){.plan-toolbar .toolbar-right{display:flex;margin-left:auto}
 .toolbar-right .quiet-label,.toolbar-right .desktop-add{display:none}
-.mobile-sync{display:flex;font-size:9px;color:#69716b;align-items:center;gap:5px}
+.mobile-sync{display:flex;font-size:9px;color:#69716b;align-items:center;gap:5px;white-space:nowrap}
 .mobile-sync:before{content:"";width:4px;height:4px;border-radius:50%;background:#69716b}
 .mobile-sync.live:before{background:#566159}
 .intent-button{min-height:44px;font-size:12px;padding:6px 10px;gap:5px}

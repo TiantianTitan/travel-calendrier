@@ -1,0 +1,16 @@
+.view {
+  min-width: 0;
+}
+
+.view[data-transition] {
+  animation: place-view-in 120ms ease-out;
+}
+
+@keyframes place-view-in {
+  from { opacity: .72; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view[data-transition] { animation: none; }
+}

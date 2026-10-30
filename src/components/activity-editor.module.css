@@ -1,0 +1,16 @@
+.conflictPanel {
+  scroll-margin-block-start: 12px;
+  scroll-margin-block-end: 84px;
+}
+
+.conflictPanel:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+
+@media (max-width: 799px) {
+  .conflictPanel {
+    scroll-margin-block-start: calc(var(--sheet-chrome-height, 100px) + 12px);
+    scroll-margin-block-end: calc(84px + env(safe-area-inset-bottom, 0px));
+  }
+}

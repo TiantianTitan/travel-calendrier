@@ -1,0 +1,25 @@
+.view {
+  min-width: 0;
+}
+
+.view[data-direction="forward"] {
+  animation: member-forward 140ms ease-out;
+}
+
+.view[data-direction="back"] {
+  animation: member-back 120ms ease-out;
+}
+
+@keyframes member-forward {
+  from { opacity: .72; transform: translateX(6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes member-back {
+  from { opacity: .72; transform: translateX(-6px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .view[data-direction] { animation: none; }
+}

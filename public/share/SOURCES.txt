@@ -1,0 +1,8 @@
+Photo: Toulouse - Garonne et Pont neuf
+Author: Frédéric Neupont
+Source: https://commons.wikimedia.org/wiki/File:Toulouse_-_Garonne_et_Pont_neuf.jpg
+License: CC0 1.0 Universal https://creativecommons.org/publicdomain/zero/1.0/
+Checked: 2026-10-30
+
+toulouse-pont-neuf.jpg is the unchanged Wikimedia 960 × 619 thumbnail.
+favicon-32.png, apple-icon-180.png, icon-192.png and icon-512.png are centered square crops of this photo, resized using the installed sharp package. No generated imagery.

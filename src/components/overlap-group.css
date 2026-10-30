@@ -1,0 +1,144 @@
+.overlap-group {
+  min-width: 0;
+}
+
+.overlap-group > .choice-heading {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.overlap-group > .choice-heading > span,
+.overlap-group > .choice-heading > strong {
+  white-space: nowrap;
+}
+
+.overlap-group > .choice-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.overlap-group--varied .choice-card .card-time {
+  display: block;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlap-group .overlap-timeline {
+  margin: 0 3px 13px;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.overlap-group .overlap-axis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-left: 29px;
+  margin-bottom: 5px;
+  color: var(--muted, #626b65);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+.overlap-group .overlap-axis > span:nth-child(2) {
+  text-align: center;
+}
+
+.overlap-group .overlap-axis > span:last-child {
+  text-align: right;
+}
+
+.overlap-group .overlap-rows {
+  display: grid;
+  gap: 3px;
+}
+
+.overlap-group .overlap-row {
+  display: grid;
+  grid-template-columns: 21px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 21px;
+}
+
+.overlap-group .overlap-number {
+  display: grid;
+  place-items: center;
+  width: 21px;
+  height: 21px;
+  border-radius: 5px;
+  background: #e9ebed;
+  color: #646b70;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.overlap-group .overlap-track {
+  display: block;
+  position: relative;
+  height: 15px;
+  min-width: 0;
+  border-left: 1px solid var(--line, #e1e6e2);
+  border-right: 1px solid var(--line, #e1e6e2);
+}
+
+.overlap-group .overlap-track::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  border-left: 1px solid var(--line, #e1e6e2);
+}
+
+.overlap-group .overlap-bar {
+  position: absolute;
+  top: 3px;
+  height: 9px;
+  border-radius: 3px;
+  background: #bcbfc1;
+}
+
+.overlap-group .overlap-row--going .overlap-number {
+  background: #e0e9e2;
+  color: #405e4e;
+}
+
+.overlap-group .overlap-row--going .overlap-bar,
+.overlap-group .overlap-legend > span {
+  background: #718a79;
+}
+
+.overlap-group .overlap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 5px;
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.5;
+  color: var(--muted, #626b65);
+}
+
+.overlap-group .overlap-legend > span {
+  width: 9px;
+  height: 5px;
+  border-radius: 2px;
+}
+
+.overlap-group .overlap-compatible {
+  margin: 0;
+  padding: 10px 2px 1px;
+  font-size: 11px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 359px) {
+  .overlap-group .overlap-timeline {
+    margin-left: 0;
+    margin-right: 0;
+  }
+
+  .overlap-group .overlap-axis {
+    font-size: 9px;
+  }
+}
